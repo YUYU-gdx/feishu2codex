@@ -24,3 +24,6 @@ logs/
 
 # Runtime data
 bot_sessions.json
+
+# Tool configuration
+.claude/
