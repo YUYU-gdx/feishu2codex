@@ -118,7 +118,7 @@ wsClient.start({
     eventDispatcher: new lark.EventDispatcher({})
         .register({
             'im.message.receive_v1': async (data) => {
-                const { message_id, chat_id, content, message_type, create_time } = data.message;
+                const { message_id, chat_id, content, message_type, create_time, mentions, chat_type } = data.message;
 
                 // 消息去重：如果已处理过，直接忽略
                 if (processedMessages.has(message_id)) {
@@ -147,6 +147,19 @@ wsClient.start({
                     try {
                         const userText = JSON.parse(content).text;
                         console.log(`[收到消息] ${userText}`);
+
+                        // 群聊场景：仅响应 @ 机器人的消息
+                        // 私聊场景：chat_type 为 'p2p'，直接响应
+                        if (chat_type === 'group') {
+                            // 检查 mentions 数组，如果没有 @ 任何人或者没有 @ 机器人，则忽略
+                            if (!mentions || mentions.length === 0) {
+                                console.log(`[忽略群聊消息] 未 @ 机器人`);
+                                return;
+                            }
+                            // 注意：mentions 中包含了所有被 @ 的用户，机器人通常会出现在列表中
+                            // 飞书会自动识别机器人被 @，所以如果收到消息且 mentions 不为空，说明机器人被 @ 了
+                            console.log(`[群聊] 检测到 @ 机器人，准备回复`);
+                        }
 
                         // 1. 获取 Codex 线程
                         // 注意: chat_id 在飞书中即代表“会话ID”。
