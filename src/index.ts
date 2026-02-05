@@ -3,22 +3,34 @@ import { Codex, Thread } from "@openai/codex-sdk";
 import dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
+import { startWebServer, updateStats, addLog } from './server.js';
+import { getUptime } from './utils.js';
 
 // 加载环境变量
 dotenv.config();
+
+// 启动 Web 控制台
+startWebServer();
 
 // 会话持久化文件路径
 const SESSION_FILE = path.join(process.cwd(), 'bot_sessions.json');
 let sessionMap: Record<string, string> = {};
 
+// 统计信息
+let messageCount = 0;
+
 // 加载历史会话记录
 try {
     if (fs.existsSync(SESSION_FILE)) {
         sessionMap = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf-8'));
-        console.log(`[系统] 已加载 ${Object.keys(sessionMap).length} 个历史会话记录`);
+        const sessionCount = Object.keys(sessionMap).length;
+        console.log(`[系统] 已加载 ${sessionCount} 个历史会话记录`);
+        addLog('info', `已加载 ${sessionCount} 个历史会话记录`);
+        updateStats({ sessions: sessionCount });
     }
 } catch (e) {
     console.error('[系统] 加载会话记录失败:', e);
+    addLog('error', `加载会话记录失败: ${e}`);
 }
 
 // 保存会话记录到磁盘
@@ -147,6 +159,10 @@ wsClient.start({
                     try {
                         const userText = JSON.parse(content).text;
                         console.log(`[收到消息] ${userText}`);
+                        addLog('info', `收到消息: ${userText.substring(0, 50)}...`);
+
+                        messageCount++;
+                        updateStats({ messages: messageCount });
 
                         // 群聊场景：仅响应 @ 机器人的消息
                         // 私聊场景：chat_type 为 'p2p'，直接响应
@@ -159,6 +175,50 @@ wsClient.start({
                             // 注意：mentions 中包含了所有被 @ 的用户，机器人通常会出现在列表中
                             // 飞书会自动识别机器人被 @，所以如果收到消息且 mentions 不为空，说明机器人被 @ 了
                             console.log(`[群聊] 检测到 @ 机器人，准备回复`);
+                            addLog('info', '群聊中检测到 @机器人');
+                        }
+
+                        // 处理内置命令
+                        if (userText.startsWith('/')) {
+                            const command = userText.trim().toLowerCase();
+                            if (command === '/status') {
+                                const statusMsg = `📊 机器人状态报告\n\n` +
+                                    `🟢 状态: 运行中\n` +
+                                    `💬 活跃会话: ${Object.keys(sessionMap).length}\n` +
+                                    `📨 处理消息: ${messageCount}\n` +
+                                    `⏱️ 运行时间: ${getUptime()}\n` +
+                                    `🔧 Codex SDK: 已连接\n` +
+                                    `📡 飞书WebSocket: 已连接`;
+                                await replyMessage(message_id, statusMsg);
+                                addLog('info', '执行 /status 命令');
+                                return;
+                            } else if (command === '/help') {
+                                const helpMsg = `🤖 机器人帮助\n\n` +
+                                    `可用命令:\n` +
+                                    `/status - 查看机器人运行状态\n` +
+                                    `/help - 显示此帮助信息\n` +
+                                    `/clear - 清除当前会话上下文\n\n` +
+                                    `💡 提示:\n` +
+                                    `- 群聊中需要 @ 机器人才会回复\n` +
+                                    `- 私聊直接发送消息即可\n` +
+                                    `- 机器人会记住对话历史`;
+                                await replyMessage(message_id, helpMsg);
+                                addLog('info', '执行 /help 命令');
+                                return;
+                            } else if (command === '/clear') {
+                                // 清除当前会话
+                                if (sessionMap[chat_id]) {
+                                    delete sessionMap[chat_id];
+                                    threadMap.delete(chat_id);
+                                    saveSessions();
+                                    await replyMessage(message_id, '✅ 已清除当前会话上下文，重新开始对话');
+                                    addLog('info', `清除会话: ${chat_id}`);
+                                    updateStats({ sessions: Object.keys(sessionMap).length });
+                                } else {
+                                    await replyMessage(message_id, 'ℹ️ 当前没有活跃会话');
+                                }
+                                return;
+                            }
                         }
 
                         // 1. 获取 Codex 线程
@@ -179,6 +239,8 @@ wsClient.start({
                             sessionMap[chat_id] = thread.id;
                             saveSessions();
                             console.log(`[系统] 会话 ${chat_id} 已绑定到线程 ${thread.id} 并保存`);
+                            addLog('info', `新会话绑定: ${chat_id}`);
+                            updateStats({ sessions: Object.keys(sessionMap).length });
                         }
 
                         // 提取回复文本
@@ -190,6 +252,7 @@ wsClient.start({
 
                     } catch (err) {
                         console.error('处理消息出错:', err);
+                        addLog('error', `处理消息出错: ${err instanceof Error ? err.message : String(err)}`);
                         await replyMessage(message_id, `发生错误: ${err instanceof Error ? err.message : String(err)}`);
                     }
                 }

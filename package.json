@@ -21,7 +21,9 @@
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.58.0",
     "@openai/codex-sdk": "^0.95.0",
-    "dotenv": "^17.2.3"
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1"
   },
   "devDependencies": {
     "@types/node": "^25.2.0",

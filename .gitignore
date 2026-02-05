@@ -27,3 +27,6 @@ bot_sessions.json
 
 # Tool configuration
 .claude/
+
+# Web frontend
+web/
