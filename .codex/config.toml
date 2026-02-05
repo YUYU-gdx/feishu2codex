@@ -1,0 +1,22 @@
+# Context7: 实时文档搜索
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+
+# GitHub: 仓库管理 (请替换 Token)
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+[mcp_servers.github.env]
+GITHUB_PERSONAL_ACCESS_TOKEN = "YOUR_GITHUB_TOKEN_HERE"
+
+# Playwright: 浏览器自动化 (自带浏览器)
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-playwright"]
+
+# Chrome DevTools: 连接现有 Chrome
+# 启动 Chrome 时需带参数: --remote-debugging-port=9222
+[mcp_servers.chrome_devtools]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-chrome-devtools"]
