@@ -3,14 +3,56 @@ import { Codex, Thread } from "@openai/codex-sdk";
 import dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import { startWebServer, updateStats, addLog } from './server.js';
 import { getUptime } from './utils.js';
+
+type Mention = {
+    id?: {
+        open_id?: string;
+        union_id?: string;
+        user_id?: string;
+        app_id?: string;
+    };
+};
+
+const IS_WINDOWS = process.platform === 'win32';
+
+function isRunningAsAdmin() {
+    if (!IS_WINDOWS) {
+        return true;
+    }
+    try {
+        const result = spawnSync('fltmc', [], { stdio: 'ignore' });
+        return result.status === 0;
+    } catch {
+        return false;
+    }
+}
+
+function ensureAdminPrivileges() {
+    if (isRunningAsAdmin()) {
+        return;
+    }
+    console.error('[权限] 当前程序需要在 Windows 管理员权限下运行。');
+    console.error('请以“以管理员身份运行”方式重新打开终端后再启动项目。');
+    process.exit(1);
+}
 
 // 加载环境变量
 dotenv.config();
 
+ensureAdminPrivileges();
+
 // 启动 Web 控制台
 startWebServer();
+
+const BOT_IDENTIFIERS = {
+    openId: process.env.FEISHU_BOT_OPEN_ID?.trim(),
+    userId: process.env.FEISHU_BOT_USER_ID?.trim(),
+    unionId: process.env.FEISHU_BOT_UNION_ID?.trim(),
+    appId: process.env.FEISHU_APP_ID?.trim(),
+};
 
 // 会话持久化文件路径
 const SESSION_FILE = path.join(process.cwd(), 'bot_sessions.json');
@@ -80,6 +122,59 @@ const getBool = (key: string, defaultVal: boolean) => {
     return val.toLowerCase() === 'true';
 };
 
+const loggerLevel = resolveLoggerLevel(process.env.FEISHU_LOGGER_LEVEL);
+let hasWarnedMissingBotIds = false;
+
+function resolveLoggerLevel(level?: string) {
+    const normalized = (level || 'info').toLowerCase();
+    switch (normalized) {
+        case 'debug':
+            return lark.LoggerLevel.debug;
+        case 'info':
+            return lark.LoggerLevel.info;
+        case 'warn':
+        case 'warning':
+            return lark.LoggerLevel.warn;
+        case 'error':
+            return lark.LoggerLevel.error;
+        default:
+            if (level) {
+                console.warn(`[系统] 未知的 FEISHU_LOGGER_LEVEL=${level}，已回退到 info`);
+            }
+            return lark.LoggerLevel.info;
+    }
+}
+
+function isBotMentioned(mentions?: Mention[]) {
+    if (!mentions || mentions.length === 0) {
+        return false;
+    }
+
+    const { openId, userId, unionId, appId } = BOT_IDENTIFIERS;
+    if (!openId && !userId && !unionId && !appId) {
+        if (!hasWarnedMissingBotIds) {
+            console.warn('[系统] 未设置 FEISHU_BOT_OPEN_ID/USER_ID/UNION_ID，群聊中将 fallback 到“mentions 非空”逻辑');
+            hasWarnedMissingBotIds = true;
+        }
+        return mentions.length > 0;
+    }
+
+    return mentions.some((mention) => {
+        const id = mention.id;
+        if (!id) return false;
+        if (openId && id.open_id === openId) return true;
+        if (userId && id.user_id === userId) return true;
+        if (unionId && id.union_id === unionId) return true;
+        if (appId && (id as any).app_id === appId) return true;
+        return false;
+    });
+}
+
+function recordHandledMessage() {
+    messageCount++;
+    updateStats({ messages: messageCount });
+}
+
 async function getOrCreateThread(chatId: string): Promise<Thread> {
     // 1. 如果内存中已有，直接返回
     if (threadMap.has(chatId)) {
@@ -122,7 +217,7 @@ async function getOrCreateThread(chatId: string): Promise<Thread> {
 const wsClient = new lark.WSClient({
     appId: process.env.FEISHU_APP_ID,
     appSecret: process.env.FEISHU_APP_SECRET,
-    loggerLevel: lark.LoggerLevel.info
+    loggerLevel
 });
 
 // 4. 启动监听
@@ -161,19 +256,13 @@ wsClient.start({
                         console.log(`[收到消息] ${userText}`);
                         addLog('info', `收到消息: ${userText.substring(0, 50)}...`);
 
-                        messageCount++;
-                        updateStats({ messages: messageCount });
-
                         // 群聊场景：仅响应 @ 机器人的消息
                         // 私聊场景：chat_type 为 'p2p'，直接响应
                         if (chat_type === 'group') {
-                            // 检查 mentions 数组，如果没有 @ 任何人或者没有 @ 机器人，则忽略
-                            if (!mentions || mentions.length === 0) {
+                            if (!isBotMentioned(mentions)) {
                                 console.log(`[忽略群聊消息] 未 @ 机器人`);
                                 return;
                             }
-                            // 注意：mentions 中包含了所有被 @ 的用户，机器人通常会出现在列表中
-                            // 飞书会自动识别机器人被 @，所以如果收到消息且 mentions 不为空，说明机器人被 @ 了
                             console.log(`[群聊] 检测到 @ 机器人，准备回复`);
                             addLog('info', '群聊中检测到 @机器人');
                         }
@@ -191,6 +280,7 @@ wsClient.start({
                                     `📡 飞书WebSocket: 已连接`;
                                 await replyMessage(message_id, statusMsg);
                                 addLog('info', '执行 /status 命令');
+                                recordHandledMessage();
                                 return;
                             } else if (command === '/help') {
                                 const helpMsg = `🤖 机器人帮助\n\n` +
@@ -204,6 +294,7 @@ wsClient.start({
                                     `- 机器人会记住对话历史`;
                                 await replyMessage(message_id, helpMsg);
                                 addLog('info', '执行 /help 命令');
+                                recordHandledMessage();
                                 return;
                             } else if (command === '/clear') {
                                 // 清除当前会话
@@ -217,6 +308,7 @@ wsClient.start({
                                 } else {
                                     await replyMessage(message_id, 'ℹ️ 当前没有活跃会话');
                                 }
+                                recordHandledMessage();
                                 return;
                             }
                         }
@@ -249,11 +341,13 @@ wsClient.start({
 
                         // 4. 回复飞书
                         await replyMessage(message_id, replyText);
+                        recordHandledMessage();
 
                     } catch (err) {
                         console.error('处理消息出错:', err);
                         addLog('error', `处理消息出错: ${err instanceof Error ? err.message : String(err)}`);
                         await replyMessage(message_id, `发生错误: ${err instanceof Error ? err.message : String(err)}`);
+                        recordHandledMessage();
                     }
                 }
             }

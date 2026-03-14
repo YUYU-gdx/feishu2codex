@@ -8,7 +8,13 @@ const __dirname = path.dirname(__filename);
 
 // 创建 Express 应用
 const app = express();
-const PORT = process.env.WEB_PORT || 3000;
+const DEFAULT_PORT = 3000;
+const parsedPort = Number(process.env.WEB_PORT);
+const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : DEFAULT_PORT;
+
+if (process.env.WEB_PORT && PORT === DEFAULT_PORT) {
+    console.warn(`[Web控制台] WEB_PORT=${process.env.WEB_PORT} 无效，已回退到 ${DEFAULT_PORT}`);
+}
 
 app.use(cors());
 app.use(express.json());

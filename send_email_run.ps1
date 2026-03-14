@@ -1,0 +1,1 @@
+﻿./send_email.ps1 -From "2485437182@qq.com" -To "chenshou2001@163.com" -Subject "test1" -Body "test1" -SmtpServer "smtp.qq.com" -Port 465 -UseSsl -Username "2485437182@qq.com" -Password "erzxoxoyzopiecdc"

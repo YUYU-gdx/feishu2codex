@@ -30,3 +30,7 @@ bot_sessions.json
 
 # Web frontend
 web/
+
+# Data and reports
+downloads/
+reports/
